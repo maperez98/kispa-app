@@ -116,14 +116,15 @@ export async function runAssistantTurn(
   let structured: AssistantOutput;
   try {
     structured = await provider.chat(msgs);
-  } catch {
+  } catch (err) {
     const { LocalProvider } = await import("./providers");
     structured = await new LocalProvider().chat(msgs);
     structured = {
       ...structured,
-      reply: `${structured.reply}\n\n(Nota técnica: el proveedor de IA configurado no respondió; se usó el motor local de demostración.)`,
+      reply: `${structured.reply}\n\n(Nota técnica: ${err instanceof Error ? err.message : String(err)} — se usó el motor local.)`,
     };
   }
+
 
   const parsed = AssistantOutputSchema.safeParse(structured);
   const out: AssistantOutput = parsed.success
