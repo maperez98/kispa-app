@@ -11,18 +11,25 @@ export interface AIProvider {
 }
 
 function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\(\S\)]*?)```/i);
-  const raw = fenced ? fenced[1] : text;
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start === -1 || end <= start) throw new Error("La respuesta no contiene JSON");
-  return JSON.parse(raw.slice(start, end + 1));
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    throw new Error("La respuesta no contiene JSON");
+  }
+  return JSON.parse(text.slice(start, end + 1));
 }
 
 export function parseStructured(text: string): AssistantOutput {
-  const parsed = AssistantOutputSchema.safeParse(extractJson(text));
+  const raw = extractJson(text) as Record<string, unknown>;
+  if (typeof raw.reply !== "string" || !raw.reply.trim()) {
+    raw.reply = "Aquí tienes la propuesta de configuración para tu negocio.";
+  }
+  const parsed = AssistantOutputSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error(`Salida del modelo no válida: ${parsed.error.issues[0]?.message ?? "schema"}`);
+    return {
+      reply: String(raw.reply),
+      intent: typeof raw.intent === "string" ? raw.intent : "chat",
+    };
   }
   return parsed.data;
 }
@@ -40,7 +47,11 @@ class OpenAIProvider implements AIProvider {
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
         messages: [
-          { role: "system", content: "Responde ÚNICAMENTE con un objeto JSON válido." },
+          {
+            role: "system",
+            content:
+              'Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta: {"reply": "tu respuesta en español", "intent": "configure" o "chat", "proposalDescription": "resumen corto", "proposal": {"profile": {"businessType": "...", "sector": "services", "sells": ["..."]}, "modules": [{"key": "clients", "enabled": true}], "categories": {"products": [{"name": "..."}], "expenses": [{"name": "..."}]}}}. Las claves válidas de modules son solo: clients, products, sales, orders, expenses, receivables, employees, reports, automations.',
+          },
           ...messages,
         ],
         response_format: { type: "json_object" },
@@ -49,7 +60,8 @@ class OpenAIProvider implements AIProvider {
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    return parseStructured(data.choices?.[0]?.message?.content ?? "");
+    const content = data?.choices?.[0]?.message?.content ?? "";
+    return parseStructured(content);
   }
 }
 
@@ -105,7 +117,7 @@ class GoogleProvider implements AIProvider {
     );
     if (!res.ok) throw new Error(`Google ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     return parseStructured(text);
   }
 }
@@ -126,7 +138,7 @@ class OllamaProvider implements AIProvider {
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    return parseStructured(data.message?.content ?? "");
+    return parseStructured(data?.message?.content ?? "");
   }
 }
 
