@@ -1,7 +1,3 @@
-// Capa de proveedores de IA desacoplada: una interfaz común (AIProvider) y
-// implementaciones intercambiables por variable de entorno AI_PROVIDER.
-// Ningún proveedor ejecuta código ni toca la base de datos: solo devuelve
-// JSON validado con AssistantOutputSchema.
 import { AssistantOutputSchema, type AssistantOutput } from "../config/patch";
 
 export interface ChatMessage {
@@ -87,9 +83,9 @@ class AnthropicProvider implements AIProvider {
 }
 
 class GoogleProvider implements AIProvider {
-  id = `google/${process.env.GOOGLE_MODEL ?? "gemini-2.0-flash"}`;
+  id = `google/${process.env.GOOGLE_MODEL ?? "gemini-2.5-flash"}`;
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const model = process.env.GOOGLE_MODEL ?? "gemini-2.0-flash";
+    const model = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
     const key = process.env.GOOGLE_API_KEY ?? "";
     const contents = messages
       .filter((m) => m.role !== "system")
@@ -134,9 +130,6 @@ class OllamaProvider implements AIProvider {
   }
 }
 
-// Motor local determinista: funciona sin claves (modo demostración) y como
-// fallback cuando el proveedor configurado falla. Devuelve el mismo esquema
-// estructurado que los modelos reales.
 export class LocalProvider implements AIProvider {
   id = "motor-local (demostración, sin clave de IA configurada)";
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
