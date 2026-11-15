@@ -37,7 +37,7 @@ export function parseStructured(text: string): AssistantOutput {
 class OpenAIProvider implements AIProvider {
   id = `openai/${process.env.OPENAI_MODEL ?? "gpt-4o-mini"}`;
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const base = process.env.OPENAI_BASE_URL?.trim() || "https://groq.com";
+    const base = "https://api.groq.com/openai/v1";
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: {
