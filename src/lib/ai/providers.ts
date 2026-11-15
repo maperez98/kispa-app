@@ -29,17 +29,16 @@ export function parseStructured(text: string): AssistantOutput {
     raw.reply = "Aquí tienes la propuesta de configuración para tu negocio.";
   }
 
-  const parsed = AssistantOutputSchema.safeParse(raw);
-  if (parsed.success) {
-    return parsed.data;
-  }
+  const replyLower = String(raw.reply).toLowerCase();
+  const wantsProposal =
+    raw.proposal !== undefined ||
+    raw.intent === "configure" ||
+    /propuesta|aplicar[áa]|m[oó]dulos habilitados|configuraci[oó]n completa/.test(replyLower);
 
-  // Si la IA envió una propuesta pero algún campo secundario (widgets/automatizaciones)
-  // no coincidió con el esquema estricto, completamos la base válida conservando
-  // el perfil y las categorías reales que generó la IA.
-  if (raw.proposal && typeof raw.proposal === "object") {
-    const p = raw.proposal as Record<string, unknown>;
-    const profile = (p.profile && typeof p.profile === "object" ? p.profile : {}) as Record<string, unknown>;
+  const p = (raw.proposal && typeof raw.proposal === "object" ? raw.proposal : {}) as Record<string, unknown>;
+  const profile = (p.profile && typeof p.profile === "object" ? p.profile : {}) as Record<string, unknown>;
+
+  if (wantsProposal) {
     const fallbackPatch = proposeFromProfile({
       businessType: typeof profile.businessType === "string" ? profile.businessType : undefined,
       sector: typeof profile.sector === "string" ? profile.sector : "services",
@@ -69,6 +68,11 @@ export function parseStructured(text: string): AssistantOutput {
     }
   }
 
+  const parsed = AssistantOutputSchema.safeParse(raw);
+  if (parsed.success) {
+    return parsed.data;
+  }
+
   return {
     reply: String(raw.reply),
     intent: typeof raw.intent === "string" ? raw.intent : "chat",
@@ -96,7 +100,7 @@ class OpenAIProvider implements AIProvider {
           {
             role: "system",
             content:
-              'Responde ÚNICAMENTE con un objeto JSON válido con esta estructura: {"reply": "explicación en español", "intent": "configure", "proposalDescription": "Configuración para el negocio", "proposal": {"profile": {"businessType": "Consultorio odontológico Nazadent", "sector": "services", "teamSize": 6, "sells": ["Valoración", "Limpieza dental", "Resinas", "Endodoncia", "Ortodoncia", "Extracciones"]}, "modules": [{"key": "clients", "enabled": true}, {"key": "products", "enabled": true}, {"key": "sales", "enabled": true}, {"key": "orders", "enabled": true}, {"key": "expenses", "enabled": true}, {"key": "receivables", "enabled": true}, {"key": "employees", "enabled": true}, {"key": "reports", "enabled": true}, {"key": "automations", "enabled": true}], "categories": {"products": [{"name": "Tratamientos dentales"}, {"name": "Insumos odontológicos"}], "expenses": [{"name": "Insumos médicos"}, {"name": "Arriendo"}, {"name": "Servicios públicos"}, {"name": "Nómina"}, {"name": "Otros"}]}}}.',
+              'Responde SIEMPRE con un objeto JSON válido. Cuando ya tengas los datos básicos del negocio o el usuario pida ver o aplicar la configuración, DEBES incluir obligatoriamente el objeto "proposal" en el JSON con este formato exacto: {"reply": "resumen en español", "intent": "configure", "proposalDescription": "Configuración para el negocio", "proposal": {"profile": {"businessType": "Nombre y tipo de negocio", "sector": "services", "teamSize": 6, "sells": ["Servicio 1", "Servicio 2"]}, "modules": [{"key": "clients", "enabled": true}, {"key": "products", "enabled": true}, {"key": "sales", "enabled": true}, {"key": "orders", "enabled": true}, {"key": "expenses", "enabled": true}, {"key": "receivables", "enabled": true}, {"key": "employees", "enabled": true}, {"key": "reports", "enabled": true}, {"key": "automations", "enabled": true}], "categories": {"products": [{"name": "Categoría 1"}], "expenses": [{"name": "Gasto 1"}]}}}. Las únicas keys válidas de modules son: clients, products, sales, orders, expenses, receivables, employees, reports, automations.',
           },
           ...recentMessages,
         ],
