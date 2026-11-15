@@ -99,19 +99,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           router.push("/onboarding");
           return;
         }
-        const active = d.companies.find((c) => !c.onboardingCompleted) ?? d.companies[0];
-        setCompanyId(active.companyId);
-        setMe(d);
-        if (!active.onboardingCompleted) {
-          router.push("/onboarding");
-          return;
-        }
-        const cfg = await api<ConfigResp>("/api/config");
-        if (cancelled) return;
-        setConfig(cfg);
-        await refreshAlerts();
-        setPendingOps(pendingOpsCount());
-        setReady(true);
+         const active = d.companies.find((c) => c.onboardingCompleted) ?? d.companies[0];
+     setCompanyId(active.companyId);
+     setMe(d);
+     const cfg = await api<ConfigResp>("/api/config");
+     if (cancelled) return;
+     setConfig(cfg);
+     await refreshAlerts();
+     setPendingOps(pendingOpsCount());
+     setReady(true);
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) router.push("/login");
       }
