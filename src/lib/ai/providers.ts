@@ -1,4 +1,8 @@
-import { AssistantOutputSchema, type AssistantOutput } from "../config/patch";
+import {
+  AssistantOutputSchema,
+  proposeFromProfile,
+  type AssistantOutput,
+} from "../config/patch";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -24,35 +28,77 @@ export function parseStructured(text: string): AssistantOutput {
   if (typeof raw.reply !== "string" || !raw.reply.trim()) {
     raw.reply = "Aquí tienes la propuesta de configuración para tu negocio.";
   }
+
   const parsed = AssistantOutputSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      reply: String(raw.reply),
-      intent: typeof raw.intent === "string" ? raw.intent : "chat",
-    };
+  if (parsed.success) {
+    return parsed.data;
   }
-  return parsed.data;
+
+  // Si la IA envió una propuesta pero algún campo secundario (widgets/automatizaciones)
+  // no coincidió con el esquema estricto, completamos la base válida conservando
+  // el perfil y las categorías reales que generó la IA.
+  if (raw.proposal && typeof raw.proposal === "object") {
+    const p = raw.proposal as Record<string, unknown>;
+    const profile = (p.profile && typeof p.profile === "object" ? p.profile : {}) as Record<string, unknown>;
+    const fallbackPatch = proposeFromProfile({
+      businessType: typeof profile.businessType === "string" ? profile.businessType : undefined,
+      sector: typeof profile.sector === "string" ? profile.sector : "services",
+      sells: Array.isArray(profile.sells) ? (profile.sells as string[]) : undefined,
+      teamSize: typeof profile.teamSize === "number" ? profile.teamSize : undefined,
+    });
+
+    const mergedProposal = {
+      ...fallbackPatch,
+      ...p,
+      dashboard: fallbackPatch.dashboard,
+      automations: fallbackPatch.automations,
+    };
+
+    const retry = AssistantOutputSchema.safeParse({
+      reply: String(raw.reply),
+      intent: "configure",
+      proposalDescription:
+        typeof raw.proposalDescription === "string" && raw.proposalDescription.trim()
+          ? raw.proposalDescription
+          : `Configuración para ${typeof profile.businessType === "string" ? profile.businessType : "tu negocio"}`,
+      proposal: mergedProposal,
+    });
+
+    if (retry.success) {
+      return retry.data;
+    }
+  }
+
+  return {
+    reply: String(raw.reply),
+    intent: typeof raw.intent === "string" ? raw.intent : "chat",
+  };
 }
 
 class OpenAIProvider implements AIProvider {
-  id = `openai/${process.env.OPENAI_MODEL ?? "gpt-4o-mini"}`;
+  id = `openai/${process.env.OPENAI_MODEL?.trim() || "openai/gpt-oss-20b"}`;
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const base = "https://api.groq.com/openai/v1";
+    const base = "https://groq.com";
+    const recentMessages = [
+      messages[0],
+      ...messages.slice(1).slice(-6),
+    ].filter(Boolean);
+
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${(process.env.OPENAI_API_KEY ?? "").trim()}`,
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+        model: process.env.OPENAI_MODEL?.trim() || "openai/gpt-oss-20b",
         messages: [
           {
             role: "system",
             content:
-              'Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta: {"reply": "tu respuesta en español", "intent": "configure" o "chat", "proposalDescription": "resumen corto", "proposal": {"profile": {"businessType": "...", "sector": "services", "sells": ["..."]}, "modules": [{"key": "clients", "enabled": true}], "categories": {"products": [{"name": "..."}], "expenses": [{"name": "..."}]}}}. Las claves válidas de modules son solo: clients, products, sales, orders, expenses, receivables, employees, reports, automations.',
+              'Responde ÚNICAMENTE con un objeto JSON válido con esta estructura: {"reply": "explicación en español", "intent": "configure", "proposalDescription": "Configuración para el negocio", "proposal": {"profile": {"businessType": "Consultorio odontológico Nazadent", "sector": "services", "teamSize": 6, "sells": ["Valoración", "Limpieza dental", "Resinas", "Endodoncia", "Ortodoncia", "Extracciones"]}, "modules": [{"key": "clients", "enabled": true}, {"key": "products", "enabled": true}, {"key": "sales", "enabled": true}, {"key": "orders", "enabled": true}, {"key": "expenses", "enabled": true}, {"key": "receivables", "enabled": true}, {"key": "employees", "enabled": true}, {"key": "reports", "enabled": true}, {"key": "automations", "enabled": true}], "categories": {"products": [{"name": "Tratamientos dentales"}, {"name": "Insumos odontológicos"}], "expenses": [{"name": "Insumos médicos"}, {"name": "Arriendo"}, {"name": "Servicios públicos"}, {"name": "Nómina"}, {"name": "Otros"}]}}}.',
           },
-          ...messages,
+          ...recentMessages,
         ],
         response_format: { type: "json_object" },
         temperature: 0.3,
@@ -65,83 +111,6 @@ class OpenAIProvider implements AIProvider {
   }
 }
 
-class AnthropicProvider implements AIProvider {
-  id = `anthropic/${process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5"}`;
-  async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-    const rest = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role, content: m.content }));
-    const res = await fetch("https://anthropic.com", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
-        max_tokens: 2048,
-        system: `${system}\n\nResponde ÚNICAMENTE con un objeto JSON (sin texto adicional).`,
-        messages: rest,
-        temperature: 0.3,
-      }),
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-    const data = await res.json();
-    const text = (data.content ?? []).map((c: { text?: string }) => c.text ?? "").join("");
-    return parseStructured(text);
-  }
-}
-
-class GoogleProvider implements AIProvider {
-  id = `google/${process.env.GOOGLE_MODEL ?? "gemini-2.5-flash"}`;
-  async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const model = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
-    const key = process.env.GOOGLE_API_KEY ?? "";
-    const contents = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-    const res = await fetch(
-      `https://googleapis.com{model}:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: `${system}\n\nResponde ÚNICAMENTE con un objeto JSON.` }] },
-          contents,
-          generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
-        }),
-      },
-    );
-    if (!res.ok) throw new Error(`Google ${res.status}: ${await res.text()}`);
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    return parseStructured(text);
-  }
-}
-
-class OllamaProvider implements AIProvider {
-  id = `ollama/${process.env.OLLAMA_MODEL ?? "llama3.2"}`;
-  async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const base = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
-    const res = await fetch(`${base}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: process.env.OLLAMA_MODEL ?? "llama3.2",
-        messages,
-        format: "json",
-        options: { temperature: 0.3 },
-      }),
-    });
-    if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
-    const data = await res.json();
-    return parseStructured(data?.message?.content ?? "");
-  }
-}
-
 export class LocalProvider implements AIProvider {
   id = "motor-local (demostración, sin clave de IA configurada)";
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
@@ -151,18 +120,8 @@ export class LocalProvider implements AIProvider {
 }
 
 export function getProvider(): AIProvider {
-  switch ((process.env.AI_PROVIDER ?? "local").toLowerCase()) {
-    case "openai":
-      if (process.env.OPENAI_API_KEY) return new OpenAIProvider();
-      break;
-    case "anthropic":
-      if (process.env.ANTHROPIC_API_KEY) return new AnthropicProvider();
-      break;
-    case "google":
-      if (process.env.GOOGLE_API_KEY) return new GoogleProvider();
-      break;
-    case "ollama":
-      return new OllamaProvider();
+  if (process.env.OPENAI_API_KEY?.trim()) {
+    return new OpenAIProvider();
   }
   return new LocalProvider();
 }
