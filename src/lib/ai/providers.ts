@@ -15,7 +15,7 @@ export interface AIProvider {
 }
 
 function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const fenced = text.match(/```(?:json)?\s*([\s\(\S\)]*?)```/i);
   const raw = fenced ? fenced[1] : text;
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -34,7 +34,7 @@ export function parseStructured(text: string): AssistantOutput {
 class OpenAIProvider implements AIProvider {
   id = `openai/${process.env.OPENAI_MODEL ?? "gpt-4o-mini"}`;
   async chat(messages: ChatMessage[]): Promise<AssistantOutput> {
-    const base = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+    const base = process.env.OPENAI_BASE_URL ?? "https://openai.com";
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: {
@@ -43,7 +43,10 @@ class OpenAIProvider implements AIProvider {
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-        messages,
+        messages: [
+          { role: "system", content: "Responde ÚNICAMENTE con un objeto JSON válido." },
+          ...messages,
+        ],
         response_format: { type: "json_object" },
         temperature: 0.3,
       }),
@@ -61,7 +64,7 @@ class AnthropicProvider implements AIProvider {
     const rest = messages
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role, content: m.content }));
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("https://anthropic.com", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -93,7 +96,7 @@ class GoogleProvider implements AIProvider {
       .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
     const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+      `https://googleapis.com{model}:generateContent?key=${key}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
